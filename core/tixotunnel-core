@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ENGINE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/tixotunnel-core.engine"
+[[ -x "$ENGINE" ]] || { echo "TixoTunnel engine not found: $ENGINE" >&2; exit 127; }
+
+args=("$@")
+config_index=-1
+config_file=""
+for ((i=0; i<${#args[@]}; i++)); do
+    case "${args[i]}" in
+        -c|--config)
+            if (( i + 1 < ${#args[@]} )); then
+                config_index=$((i + 1))
+                config_file="${args[i+1]}"
+            fi
+            break
+            ;;
+        -c=*)
+            config_index=$i
+            config_file="${args[i]#-c=}"
+            break
+            ;;
+        --config=*)
+            config_index=$i
+            config_file="${args[i]#--config=}"
+            break
+            ;;
+    esac
+done
+
+if [[ -n "$config_file" && -f "$config_file" ]] && grep -Eq '^[[:space:]]*forwarder[[:space:]]*=[[:space:]]*"tixo"[[:space:]]*$' "$config_file"; then
+    runtime_config=$(mktemp /tmp/tixotunnel-core.XXXXXX.toml)
+    cleanup() { rm -f "$runtime_config"; }
+    trap cleanup EXIT HUP INT TERM
+    sed -E 's/^([[:space:]]*forwarder[[:space:]]*=[[:space:]]*)"tixo"([[:space:]]*)$/\1"tixo-fwd"\2/' "$config_file" > "$runtime_config"
+    chmod 0600 "$runtime_config"
+    if [[ "${args[config_index]}" == -c=* ]]; then
+        args[config_index]="-c=$runtime_config"
+    elif [[ "${args[config_index]}" == --config=* ]]; then
+        args[config_index]="--config=$runtime_config"
+    else
+        args[config_index]="$runtime_config"
+    fi
+    "$ENGINE" "${args[@]}"
+    exit $?
+fi
+
+exec "$ENGINE" "${args[@]}"
