@@ -27,3 +27,6 @@ This replaces the obsolete download targets that caused HTTP 404 errors.
 - Network Optimization Center
 - Automatic TCP BBR activation and status checks
 - fq queue discipline support
+
+- Fixed Advanced Spoof Tester startup by separating it from the Backhaul tunnel engine.
+- Added dedicated `tixotunnel-spoof-tester` binary.

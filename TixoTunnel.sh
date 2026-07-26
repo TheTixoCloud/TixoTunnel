@@ -12,9 +12,9 @@ INSTALL_DIR="/root/tixotunnel-core"
 PANEL_PATH="/root/TixoTunnel.sh"
 COMMAND_PATH="/usr/local/bin/tixotunnel"
 CORE_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-core"
-SPOOF_TESTER_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-core.engine"
-SPOOF_TESTER_FALLBACK_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/tixotunnel-core.engine"
-SPOOF_TESTER_FILE="${INSTALL_DIR}/tixotunnel-core.engine"
+SPOOF_TESTER_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-spoof-tester"
+SPOOF_TESTER_FALLBACK_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/tixotunnel-spoof-tester"
+SPOOF_TESTER_FILE="${INSTALL_DIR}/tixotunnel-spoof-tester"
 PANEL_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/TixoTunnel.sh"
 
 bootstrap_install() {
@@ -64,7 +64,7 @@ bootstrap_install() {
         }
 
         echo '[3/5] Installing Spoof Tester...'
-        local local_tester="$(cd "$(dirname "$current_path")" 2>/dev/null && pwd)/core/tixotunnel-core.engine"
+        local local_tester="$(cd "$(dirname "$current_path")" 2>/dev/null && pwd)/core/tixotunnel-spoof-tester"
         if [[ -f "$local_tester" ]]; then
             cp -f "$local_tester" "$tmp_tester"
         else
@@ -99,7 +99,7 @@ bootstrap_install
 service_dir="/etc/systemd/system"
 config_dir="/root/tixotunnel-core"
 CORE_FILE="${config_dir}/tixotunnel-core"
-SPOOF_TESTER_FILE="${config_dir}/tixotunnel-core.engine"
+SPOOF_TESTER_FILE="${config_dir}/tixotunnel-spoof-tester"
 SPOOF_TEST_DIR="${config_dir}/spoof-tests"
 LINK_TEST_DIR="${config_dir}/link-benchmarks"
 DIAG_DIR="${config_dir}/diagnostics"
@@ -276,8 +276,8 @@ if [[ -n "$local_candidate" && -f "$local_candidate" ]]; then
 fi
 local script_dir
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
-if [[ -f "$script_dir/core/tixotunnel-core.engine" ]]; then
-    install -m 0755 "$script_dir/core/tixotunnel-core.engine" "$SPOOF_TESTER_FILE"
+if [[ -f "$script_dir/core/tixotunnel-spoof-tester" ]]; then
+    install -m 0755 "$script_dir/core/tixotunnel-spoof-tester" "$SPOOF_TESTER_FILE"
     return 0
 fi
 local tmp_file
@@ -295,8 +295,8 @@ fi
 rm -f "$tmp_file"
 colorize red "Automatic Spoof Tester download failed." bold
 colorize yellow "Check internet access or publish one of these GitHub assets:"
-echo "  Release asset : tixotunnel-core.engine"
-echo "  Repository    : core/tixotunnel-core.engine"
+echo "  Release asset : tixotunnel-spoof-tester"
+echo "  Repository    : core/tixotunnel-spoof-tester"
 return 1
 }
 
@@ -1553,7 +1553,7 @@ unified_update() {
   tmpdir=$(mktemp -d)
   panel_tmp="$tmpdir/TixoTunnel.sh"
   core_tmp="$tmpdir/tixotunnel-core"
-  tester_tmp="$tmpdir/tixotunnel-core.engine"
+  tester_tmp="$tmpdir/tixotunnel-spoof-tester"
   trap 'rm -rf "$tmpdir"' RETURN
 
   echo; colorize cyan "[1/8] Creating rollback backup..." bold

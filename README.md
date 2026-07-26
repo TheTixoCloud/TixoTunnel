@@ -35,3 +35,8 @@ The unified updater downloads the console and both core files directly from the 
 ## Important
 
 Use tunneling, forwarding, diagnostics, benchmarking, and spoof-testing features only on systems and networks you own or are explicitly authorized to test.
+
+
+## Advanced Spoof Tester
+
+The tester uses the dedicated `core/tixotunnel-spoof-tester` binary. The tunnel engine remains `core/tixotunnel-core.engine`; the two binaries are intentionally separate.
