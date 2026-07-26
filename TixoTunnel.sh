@@ -12,8 +12,11 @@ INSTALL_DIR="/root/tixotunnel-core"
 PANEL_PATH="/root/TixoTunnel.sh"
 COMMAND_PATH="/usr/local/bin/tixotunnel"
 CORE_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-core"
+ENGINE_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-core.engine"
+ENGINE_FALLBACK_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/tixotunnel-core.engine"
 SPOOF_TESTER_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-spoof-tester"
 SPOOF_TESTER_FALLBACK_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/tixotunnel-spoof-tester"
+ENGINE_FILE="${INSTALL_DIR}/tixotunnel-core.engine"
 SPOOF_TESTER_FILE="${INSTALL_DIR}/tixotunnel-spoof-tester"
 PANEL_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/TixoTunnel.sh"
 
@@ -32,11 +35,12 @@ bootstrap_install() {
         }
 
         mkdir -p "$INSTALL_DIR"
-        local tmp_panel tmp_core tmp_tester
+        local tmp_panel tmp_core tmp_engine tmp_tester
         tmp_panel=$(mktemp)
         tmp_core=$(mktemp)
+        tmp_engine=$(mktemp)
         tmp_tester=$(mktemp)
-        trap 'rm -f "$tmp_panel" "$tmp_core" "$tmp_tester"' RETURN
+        trap 'rm -f "$tmp_panel" "$tmp_core" "$tmp_engine" "$tmp_tester"' RETURN
 
         clear
         printf '\033[38;5;196m%s\033[0m\n' '___________.__             _________ .__                   .___'
@@ -63,7 +67,20 @@ bootstrap_install() {
             exit 1
         }
 
-        echo '[3/5] Installing Spoof Tester...'
+        echo '[3/6] Installing AETHER-X1 engine...'
+        local local_engine="$(cd "$(dirname "$current_path")" 2>/dev/null && pwd)/core/tixotunnel-core.engine"
+        if [[ -f "$local_engine" ]]; then
+            cp -f "$local_engine" "$tmp_engine"
+        else
+            if ! curl -fL --retry 3 --connect-timeout 15 -o "$tmp_engine" "$ENGINE_DOWNLOAD_URL"; then
+                curl -fL --retry 3 --connect-timeout 15 -o "$tmp_engine" "$ENGINE_FALLBACK_URL" || {
+                    echo 'AETHER-X1 engine download failed.'
+                    exit 1
+                }
+            fi
+        fi
+
+        echo '[4/6] Installing Spoof Tester...'
         local local_tester="$(cd "$(dirname "$current_path")" 2>/dev/null && pwd)/core/tixotunnel-spoof-tester"
         if [[ -f "$local_tester" ]]; then
             cp -f "$local_tester" "$tmp_tester"
@@ -77,14 +94,15 @@ bootstrap_install() {
             fi
         fi
 
-        echo '[4/5] Creating directories and setting permissions...'
+        echo '[5/6] Creating directories and setting permissions...'
 
         install -m 0755 "$tmp_panel" "$PANEL_PATH"
         install -m 0755 "$tmp_panel" "$COMMAND_PATH"
         install -m 0755 "$tmp_core" "$INSTALL_DIR/tixotunnel-core"
+        install -m 0755 "$tmp_engine" "$ENGINE_FILE"
         [[ -s "$tmp_tester" ]] && install -m 0755 "$tmp_tester" "$SPOOF_TESTER_FILE"
 
-        echo '[5/5] Installation completed.'
+        echo '[6/6] Installation completed.' 
         echo 'Run later with: tixotunnel'
         sleep 1
         exec "$PANEL_PATH"
@@ -99,6 +117,7 @@ bootstrap_install
 service_dir="/etc/systemd/system"
 config_dir="/root/tixotunnel-core"
 CORE_FILE="${config_dir}/tixotunnel-core"
+ENGINE_FILE="${config_dir}/tixotunnel-core.engine"
 SPOOF_TESTER_FILE="${config_dir}/tixotunnel-spoof-tester"
 SPOOF_TEST_DIR="${config_dir}/spoof-tests"
 LINK_TEST_DIR="${config_dir}/link-benchmarks"
@@ -482,23 +501,24 @@ fi
 fi
 }
 download_tixo_engine() {
-local source_url="https://github.com/${GITHUB_REPO}/releases/latest/download/tixotunnel-core"
-if [[ "$1" == "menu" ]]; then
-rm -f "$CORE_FILE" >/dev/null 2>&1
+if [[ "${1:-}" == "menu" ]]; then
+rm -f "$ENGINE_FILE" >/dev/null 2>&1
 colorize cyan "Existing tunnel services may need a restart after the engine update." bold
 sleep 1
 fi
-[[ -x "$CORE_FILE" ]] && return 0
+[[ -x "$ENGINE_FILE" ]] && return 0
 mkdir -p "$config_dir"
 local tmp_file
- tmp_file=$(mktemp)
+tmp_file=$(mktemp)
 colorize cyan "Downloading Tixo Aether Engine..." bold
-if ! curl -fL --retry 3 --connect-timeout 15 -o "$tmp_file" "$source_url"; then
-colorize red "Core download failed: $source_url"
-rm -f "$tmp_file"
-return 1
+if ! curl -fL --retry 3 --connect-timeout 15 -o "$tmp_file" "$ENGINE_DOWNLOAD_URL"; then
+  if ! curl -fL --retry 3 --connect-timeout 15 -o "$tmp_file" "$ENGINE_FALLBACK_URL"; then
+    colorize red "Engine download failed from repository and release assets."
+    rm -f "$tmp_file"
+    return 1
+  fi
 fi
-install -m 0755 "$tmp_file" "$CORE_FILE"
+install -m 0755 "$tmp_file" "$ENGINE_FILE"
 rm -f "$tmp_file"
 colorize green "Tixo Aether Engine installed successfully." bold
 }
@@ -1525,7 +1545,7 @@ create_update_backup() {
   stamp=$(date +%Y%m%d-%H%M%S)
   archive="$UPDATE_BACKUP_DIR/tixotunnel-update-$stamp.tar.gz"
   manifest=$(mktemp)
-  for f in "$PANEL_PATH" "$COMMAND_PATH" "$CORE_FILE" "$SPOOF_TESTER_FILE"; do
+  for f in "$PANEL_PATH" "$COMMAND_PATH" "$CORE_FILE" "$ENGINE_FILE" "$SPOOF_TESTER_FILE"; do
     [[ -e "$f" ]] && echo "$f" >> "$manifest"
   done
   find /etc/systemd/system -maxdepth 1 -type f \( -name 'tixotunnel-*.service' -o -name 'tixotunnel-*.timer' \) -print >> "$manifest" 2>/dev/null || true
@@ -1549,44 +1569,52 @@ unified_update() {
   read -r -p "Update all TixoTunnel components now? [Y/n]: " answer
   [[ "$answer" =~ ^[Nn]$ ]] && return
 
-  local tmpdir backup panel_tmp core_tmp tester_tmp rc=0
+  local tmpdir backup panel_tmp core_tmp engine_tmp tester_tmp rc=0
   tmpdir=$(mktemp -d)
   panel_tmp="$tmpdir/TixoTunnel.sh"
   core_tmp="$tmpdir/tixotunnel-core"
+  engine_tmp="$tmpdir/tixotunnel-core.engine"
   tester_tmp="$tmpdir/tixotunnel-spoof-tester"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  echo; colorize cyan "[1/8] Creating rollback backup..." bold
+  echo; colorize cyan "[1/9] Creating rollback backup..." bold
   backup=$(create_update_backup) || { colorize red "Backup creation failed. Update cancelled."; press_key; return 1; }
   colorize green "      OK — $backup"
 
-  echo; colorize cyan "[2/8] Downloading console..." bold
+  echo; colorize cyan "[2/9] Downloading console..." bold
   curl -fL --retry 3 --connect-timeout 15 -o "$panel_tmp" "$PANEL_DOWNLOAD_URL" || rc=1
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[3/8] Downloading AETHER-X1 core..." bold
+  echo; colorize cyan "[3/9] Downloading AETHER-X1 core..." bold
   curl -fL --retry 3 --connect-timeout 15 -o "$core_tmp" "$CORE_DOWNLOAD_URL" || rc=1
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[4/8] Downloading Spoof Tester..." bold
+  echo; colorize cyan "[4/9] Downloading AETHER-X1 engine..." bold
+  if ! curl -fL --retry 3 --connect-timeout 15 -o "$engine_tmp" "$ENGINE_DOWNLOAD_URL"; then
+    curl -fL --retry 3 --connect-timeout 15 -o "$engine_tmp" "$ENGINE_FALLBACK_URL" || rc=1
+  fi
+  ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
+
+  echo; colorize cyan "[5/9] Downloading Spoof Tester..." bold
   if ! curl -fL --retry 3 --connect-timeout 15 -o "$tester_tmp" "$SPOOF_TESTER_DOWNLOAD_URL"; then
     curl -fL --retry 3 --connect-timeout 15 -o "$tester_tmp" "$SPOOF_TESTER_FALLBACK_URL" || rc=1
   fi
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[5/8] Verifying downloaded files..." bold
-  if [[ ! -s "$panel_tmp" || ! -s "$core_tmp" || ! -s "$tester_tmp" ]]; then
+  echo; colorize cyan "[6/9] Verifying downloaded files..." bold
+  if [[ ! -s "$panel_tmp" || ! -s "$core_tmp" || ! -s "$engine_tmp" || ! -s "$tester_tmp" ]]; then
     colorize red "      Verification failed: one or more files are empty."; press_key; return 1
   fi
   bash -n "$panel_tmp" || { colorize red "      Console syntax verification failed."; press_key; return 1; }
-  chmod 0755 "$core_tmp" "$tester_tmp"
+  chmod 0755 "$core_tmp" "$engine_tmp" "$tester_tmp"
   colorize green "      OK"
 
-  echo; colorize cyan "[6/8] Installing all components..." bold
+  echo; colorize cyan "[7/9] Installing all components..." bold
   mkdir -p "$config_dir"
   if ! install -m0755 "$panel_tmp" "$PANEL_PATH" || \
      ! install -m0755 "$panel_tmp" "$COMMAND_PATH" || \
      ! install -m0755 "$core_tmp" "$CORE_FILE" || \
+     ! install -m0755 "$engine_tmp" "$ENGINE_FILE" || \
      ! install -m0755 "$tester_tmp" "$SPOOF_TESTER_FILE"; then
     colorize red "      Installation failed. Restoring backup..."
     tar -xzf "$backup" -C / >/dev/null 2>&1 || true
@@ -1595,13 +1623,13 @@ unified_update() {
   fi
   colorize green "      OK"
 
-  echo; colorize cyan "[7/8] Reloading services..." bold
+  echo; colorize cyan "[8/9] Reloading services..." bold
   systemctl daemon-reload
   restart_active_tunnels
   colorize green "      OK"
 
-  echo; colorize cyan "[8/8] Final validation..." bold
-  [[ -x "$CORE_FILE" && -x "$SPOOF_TESTER_FILE" ]] || {
+  echo; colorize cyan "[9/9] Final validation..." bold
+  [[ -x "$CORE_FILE" && -x "$ENGINE_FILE" && -x "$SPOOF_TESTER_FILE" ]] || {
     colorize red "      Validation failed. Restoring backup..."
     tar -xzf "$backup" -C / >/dev/null 2>&1 || true
     systemctl daemon-reload; restart_active_tunnels; press_key; return 1
