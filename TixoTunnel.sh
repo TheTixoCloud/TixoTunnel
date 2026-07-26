@@ -2551,6 +2551,67 @@ tunnel_management() {
   case "$action" in 1) tunnel_health "$selected_config";; 2) restart_service "$service_name";; 3) view_service_logs "$service_name";; 4) view_service_status "$service_name";; 5) restart_scheduler "$service_name";; 6) tunnel_notes "$selected_config";; 7) destroy_tunnel "$selected_config";; esac
 }
 
+
+network_optimization_menu() {
+  while true; do
+    clear
+    section_header "Network Optimization"
+    echo "  [1] Enable TCP BBR"
+    echo "  [2] Check TCP Optimization Status"
+    echo "  [3] Apply Kernel Performance Profile"
+    echo "  [4] Disable BBR"
+    echo "  [0] Back"
+    echo
+    read -r -p "Select: " n
+    case "$n" in
+      1) enable_bbr ;;
+      2) check_bbr_status ;;
+      3) apply_network_profile ;;
+      4) disable_bbr ;;
+      0) return ;;
+    esac
+  done
+}
+
+enable_bbr() {
+  clear
+  section_header "Enable TCP BBR"
+  if ! modprobe tcp_bbr 2>/dev/null; then
+    colorize red "Kernel does not support TCP BBR."
+    press_key
+    return
+  fi
+  cat >/etc/sysctl.d/99-tixotunnel-bbr.conf <<EOF
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+  sysctl --system >/dev/null 2>&1 || true
+  colorize green "TCP BBR enabled successfully."
+  check_bbr_status
+  press_key
+}
+
+check_bbr_status() {
+  echo
+  echo "TCP Stack Status"
+  echo "----------------"
+  printf "  Queue        : "
+  sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown
+  printf "  Congestion   : "
+  sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown
+}
+
+disable_bbr() {
+  rm -f /etc/sysctl.d/99-tixotunnel-bbr.conf
+  sysctl --system >/dev/null 2>&1 || true
+  colorize green "BBR configuration removed."
+  press_key
+}
+
+apply_network_profile() {
+  enable_bbr
+}
+
 display_menu() {
   display_logo; display_server_info; display_engine_status; echo
   colorize green   " [1] Create Tunnel" bold
@@ -2561,8 +2622,9 @@ display_menu() {
   echo              " [6] Link Benchmark Pro"
   echo              " [7] Server Speed Test"
   echo              " [8] Network Information"
-  echo              " [9] Update Center"
-  colorize red      "[10] Complete Uninstall" bold
+  echo              " [9] Network Optimization"
+  echo              " [10] Update Center"
+  colorize red      "[11] Complete Uninstall" bold
   echo              " [0] Exit"
   echo -e "\033[38;5;245m────────────────────────────────────────────────────────────────────\033[0m"
 }
@@ -2577,7 +2639,7 @@ update_center() {
   case "$u" in 1) check_updates;; 2) unified_update;; 3) rollback_last_update;; esac
 }
 read_option() {
-  read -r -p "Select an option [0-10]: " choice
-  case "$choice" in 1) configure_tunnel;; 2) tunnel_management;; 3) operations_center;; 4) spoof_tester_run;; 5) connection_benchmark;; 6) link_benchmark_menu;; 7) server_speedtest_menu;; 8) network_information;; 9) update_center;; 10) complete_uninstall;; 0) clear; exit 0;; *) colorize red "Invalid option."; sleep 1;; esac
+  read -r -p "Select an option [0-11]: " choice
+  case "$choice" in 1) configure_tunnel;; 2) tunnel_management;; 3) operations_center;; 4) spoof_tester_run;; 5) connection_benchmark;; 6) link_benchmark_menu;; 7) server_speedtest_menu;; 8) network_information;; 9) network_optimization_menu;; 10) update_center;; 11) complete_uninstall;; 0) clear; exit 0;; *) colorize red "Invalid option."; sleep 1;; esac
 }
 while true; do display_menu; read_option; done

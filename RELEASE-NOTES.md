@@ -21,3 +21,9 @@ core/tixotunnel-core.engine
 ```
 
 This replaces the obsolete download targets that caused HTTP 404 errors.
+
+
+## Added
+- Network Optimization Center
+- Automatic TCP BBR activation and status checks
+- fq queue discipline support
