@@ -3,10 +3,17 @@ set -o pipefail
 
 SCRIPT_VERSION="NEXUS-1.0.0"
 ENGINE_EDITION="AETHER-X1"
+OSS_ENGINE_EDITION="Go-OSS"
 BRAND_NAME="TixoTunnel"
 BRAND_CHANNEL="@TixoCloud"
 BRAND_WEBSITE="TixoCloud.com"
 GITHUB_REPO="TheTixoCloud/TixoTunnel"
+
+case "$(uname -m)" in
+    x86_64|amd64) TIXO_ARCH="amd64" ;;
+    aarch64|arm64) TIXO_ARCH="arm64" ;;
+    *) TIXO_ARCH="amd64" ;;
+esac
 
 INSTALL_DIR="/root/tixotunnel-core"
 PANEL_PATH="/root/TixoTunnel.sh"
@@ -19,6 +26,39 @@ SPOOF_TESTER_FALLBACK_URL="https://github.com/${GITHUB_REPO}/releases/latest/dow
 ENGINE_FILE="${INSTALL_DIR}/tixotunnel-core.engine"
 SPOOF_TESTER_FILE="${INSTALL_DIR}/tixotunnel-spoof-tester"
 PANEL_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/TixoTunnel.sh"
+# Open-source Go engine (cmd/backhaul), published alongside the legacy
+# AETHER-X1 bundle. New tunnels created by this console run on this engine;
+# tunnels created by older console versions keep using AETHER-X1 untouched.
+OSS_ENGINE_DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/core/tixotunnel-engine-${TIXO_ARCH}"
+OSS_ENGINE_RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/TixoTunnel-linux-${TIXO_ARCH}.tar.gz"
+OSS_ENGINE_FILE="${INSTALL_DIR}/tixotunnel-engine"
+
+# Fetches the open-source Go engine binary for the detected architecture into
+# $dest. Tries the raw core/ path first (same pattern as the legacy engine),
+# then falls back to the tagged-release tarball once one is published.
+fetch_oss_engine() {
+    local dest="$1" tmp_bin tmp_tar
+    tmp_bin=$(mktemp)
+    if curl -fL --retry 3 --connect-timeout 15 -o "$tmp_bin" "$OSS_ENGINE_DOWNLOAD_URL" && [[ -s "$tmp_bin" ]]; then
+        install -m 0755 "$tmp_bin" "$dest"
+        rm -f "$tmp_bin"
+        return 0
+    fi
+    rm -f "$tmp_bin"
+    tmp_tar=$(mktemp)
+    if curl -fL --retry 3 --connect-timeout 15 -o "$tmp_tar" "$OSS_ENGINE_RELEASE_URL" && [[ -s "$tmp_tar" ]]; then
+        local extract_dir
+        extract_dir=$(mktemp -d)
+        if tar -xzf "$tmp_tar" -C "$extract_dir" tixotunnel 2>/dev/null && [[ -f "$extract_dir/tixotunnel" ]]; then
+            install -m 0755 "$extract_dir/tixotunnel" "$dest"
+            rm -rf "$extract_dir" "$tmp_tar"
+            return 0
+        fi
+        rm -rf "$extract_dir"
+    fi
+    rm -f "$tmp_tar"
+    return 1
+}
 
 bootstrap_install() {
     if [[ ${EUID} -ne 0 ]]; then
@@ -35,12 +75,13 @@ bootstrap_install() {
         }
 
         mkdir -p "$INSTALL_DIR"
-        local tmp_panel tmp_core tmp_engine tmp_tester
+        local tmp_panel tmp_core tmp_engine tmp_tester tmp_oss_engine
         tmp_panel=$(mktemp)
         tmp_core=$(mktemp)
         tmp_engine=$(mktemp)
         tmp_tester=$(mktemp)
-        trap 'rm -f "$tmp_panel" "$tmp_core" "$tmp_engine" "$tmp_tester"' RETURN
+        tmp_oss_engine=$(mktemp)
+        trap 'rm -f "$tmp_panel" "$tmp_core" "$tmp_engine" "$tmp_tester" "$tmp_oss_engine"' RETURN
 
         clear
         printf '\033[38;5;196m%s\033[0m\n' '___________.__             _________ .__                   .___'
@@ -94,15 +135,27 @@ bootstrap_install() {
             fi
         fi
 
-        echo '[5/6] Creating directories and setting permissions...'
+        echo '[5/7] Installing Go-OSS engine...'
+        local local_oss_engine="$(cd "$(dirname "$current_path")" 2>/dev/null && pwd)/core/tixotunnel-engine-${TIXO_ARCH}"
+        if [[ -f "$local_oss_engine" ]]; then
+            cp -f "$local_oss_engine" "$tmp_oss_engine"
+        elif fetch_oss_engine "$tmp_oss_engine"; then
+            :
+        else
+            echo 'Go-OSS engine download failed (new tunnels will not be creatable until Update Center succeeds).'
+            : > "$tmp_oss_engine"
+        fi
+
+        echo '[6/7] Creating directories and setting permissions...'
 
         install -m 0755 "$tmp_panel" "$PANEL_PATH"
         install -m 0755 "$tmp_panel" "$COMMAND_PATH"
         install -m 0755 "$tmp_core" "$INSTALL_DIR/tixotunnel-core"
         install -m 0755 "$tmp_engine" "$ENGINE_FILE"
         [[ -s "$tmp_tester" ]] && install -m 0755 "$tmp_tester" "$SPOOF_TESTER_FILE"
+        [[ -s "$tmp_oss_engine" ]] && install -m 0755 "$tmp_oss_engine" "$OSS_ENGINE_FILE"
 
-        echo '[6/6] Installation completed.' 
+        echo '[7/7] Installation completed.'
         echo 'Run later with: tixotunnel'
         sleep 1
         exec "$PANEL_PATH"
@@ -280,6 +333,28 @@ if [[ -z "$input" ]]; then
 else
     CONFIG[psk]="$input"
 fi
+}
+
+prompt_security_token() {
+local input
+colorize yellow "Use exactly the same Security Token on both tunnel endpoints (16-4096 bytes)."
+echo -ne "[-] Security Token (paste existing token, or press Enter to generate): "
+while true; do
+    read -r input
+    if [[ -z "$input" ]]; then
+        input=$(generate_shared_key)
+        CONFIG[token]="$input"
+        colorize green "Generated token: $input" bold
+        colorize yellow "Save this token; enter it on the opposite server."
+        return 0
+    fi
+    if (( ${#input} >= 16 )); then
+        CONFIG[token]="$input"
+        return 0
+    fi
+    colorize red "Token must be at least 16 bytes. Paste a longer token or press Enter to generate one."
+    echo -ne "[-] Security Token: "
+done
 }
 
 
@@ -522,8 +597,25 @@ install -m 0755 "$tmp_file" "$ENGINE_FILE"
 rm -f "$tmp_file"
 colorize green "Tixo Aether Engine installed successfully." bold
 }
+download_tixo_oss_engine() {
+if [[ "${1:-}" == "menu" ]]; then
+rm -f "$OSS_ENGINE_FILE" >/dev/null 2>&1
+colorize cyan "Existing Go-OSS tunnel services may need a restart after the engine update." bold
+sleep 1
+fi
+[[ -x "$OSS_ENGINE_FILE" ]] && return 0
+mkdir -p "$config_dir"
+colorize cyan "Downloading Go-OSS Engine..." bold
+if fetch_oss_engine "$OSS_ENGINE_FILE"; then
+colorize green "Go-OSS Engine installed successfully." bold
+return 0
+fi
+colorize red "Go-OSS engine download failed from repository and release assets."
+return 1
+}
 install_jq
 download_tixo_engine
+download_tixo_oss_engine
 declare -A CONFIG
 reset_config() {
 CONFIG=()
@@ -586,7 +678,7 @@ prompt_shared_key
 prompt_with_default "KDF Iterations" "100000" CONFIG[kdf_iterations]
 fi
 else
-prompt_with_default "Security Token" "your_token" CONFIG[token]
+prompt_security_token
 CONFIG[enable_encryption]="false"
 fi
 echo ""
@@ -778,18 +870,9 @@ read -r CONFIG[ports_mapping]
 echo ""
 else
 wizard_header "8/8" "ROUTE MAPPING" "Map public ports to destination services"
-colorize magenta "Choose the forwarding engine:"
-echo "  1) Tixo TCP Relay       — optimized TCP forwarding"
-echo "  2) Netfilter Gateway    — TCP + UDP forwarding"
-while true; do
-    read -r -p "Forwarding engine [1-2] (default: 1): " forwarder_choice
-    forwarder_choice="${forwarder_choice:-1}"
-    case "$forwarder_choice" in
-        1) CONFIG[forwarder]="tixo"; CONFIG[forwarder_label]="Tixo TCP Relay"; break ;;
-        2) CONFIG[forwarder]="iptables"; CONFIG[forwarder_label]="Netfilter Gateway"; break ;;
-        *) colorize red "Invalid choice. Enter 1 or 2." ;;
-    esac
-done
+colorize magenta "Forwarding engine: Tixo TCP Relay (owned userspace forwarding, TCP + UDP)"
+CONFIG[forwarder]="backhaul"
+CONFIG[forwarder_label]="Tixo TCP Relay"
 echo ""
 colorize magenta "Port mapping syntax"
 printf "  \033[38;5;51m%-18s\033[0m %s\n" "443" "same port on both sides"
@@ -905,7 +988,6 @@ if [[ "${CONFIG[custom_packet]}" == "true" ]]; then
         echo "spoof_dst_ip = \"${CONFIG[spoof_src_ip]}\""
         echo "spoof_src_ip = \"${CONFIG[spoof_dst_ip]}\""
     fi
-    echo "custom_packet = true"
 fi
 [[ -n "${CONFIG[ipx_icmp_type]}" ]] && echo "icmp_type = ${CONFIG[ipx_icmp_type]}"
 [[ -n "${CONFIG[ipx_icmp_code]}" ]] && echo "icmp_code = ${CONFIG[ipx_icmp_code]}"
@@ -977,6 +1059,12 @@ fi
 configure_server() {
 local mode="$1"  # server or client
 local mode_name
+if [[ ! -x "$OSS_ENGINE_FILE" ]]; then
+colorize red "Go-OSS engine is not installed." bold
+colorize yellow "Run [10] Update Center > Update Everything, then try again."
+press_key
+return 1
+fi
 if [[ "$mode" == "server" ]]; then
 mode_name="IRAN (Server)"
 else
@@ -1080,7 +1168,6 @@ if [[ "$is_ipx" == "true" ]]; then
         fi
         grep -Fqx "spoof_src_ip = \"${expected_spoof_src}\"" "$temp_config" || { rm -f "$temp_config"; colorize red "Config verification failed: spoof SRC mismatch."; press_key; return 1; }
         grep -Fqx "spoof_dst_ip = \"${expected_spoof_dst}\"" "$temp_config" || { rm -f "$temp_config"; colorize red "Config verification failed: spoof DST mismatch."; press_key; return 1; }
-        grep -Fqx "custom_packet = true" "$temp_config" || { rm -f "$temp_config"; colorize red "Config verification failed: custom packet flag missing."; press_key; return 1; }
     fi
 fi
 if [[ "$mode" == "server" && -n "${CONFIG[forwarder]}" ]]; then
@@ -1104,7 +1191,8 @@ fi
 colorize green "Configuration completed and verified." bold
 printf "\n  Config file : %s\n" "$config_file"
 printf "  Service     : %s\n" "$service_name"
-printf "  ExecStart   : %s -c %s\n" "$CORE_FILE" "$config_file"
+printf "  Engine      : %s\n" "$OSS_ENGINE_EDITION"
+printf "  ExecStart   : %s -c %s\n" "$OSS_ENGINE_FILE" "$config_file"
 if [[ "$is_ipx" == "true" ]]; then
     printf "  Destination : %s\n" "${CONFIG[ipx_dst_ip]}"
     if [[ "${CONFIG[custom_packet]}" == "true" ]]; then
@@ -1128,12 +1216,12 @@ local service_file="${service_dir}/tixotunnel-${type}${port}.service"
 local desc_type="$(tr '[:lower:]' '[:upper:]' <<< "${type:0:1}")${type:1}"
 cat > "$service_file" <<EOF
 [Unit]
-Description=TixoTunnel $desc_type Port $port
+Description=TixoTunnel $desc_type Port $port (${OSS_ENGINE_EDITION})
 After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=${CORE_FILE} -c $config_file
+ExecStart=${OSS_ENGINE_FILE} -c $config_file
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -1212,10 +1300,13 @@ printf "  CPU %-4s%%    RAM %-4s%%    DISK %-4s%%    UPTIME %s\n" "$cpu" "$ram" 
 echo -e "${gray}════════════════════════════════════════════════════════════════════${reset}"
 }
 display_engine_status() {
-if [[ -x "$CORE_FILE" ]]; then
-    echo -e "\033[38;5;46m ● Engine ready\033[0m  \033[38;5;245mTUN • IPX • Spoof Support\033[0m"
+if [[ -x "$OSS_ENGINE_FILE" ]]; then
+    echo -e "\033[38;5;46m ● Go-OSS Engine ready\033[0m  \033[38;5;245mTUN • IPX • Spoof Support\033[0m"
 else
-    echo -e "\033[38;5;196m ● Engine missing\033[0m"
+    echo -e "\033[38;5;196m ● Go-OSS Engine missing\033[0m  \033[38;5;245mRun Update Center to install it\033[0m"
+fi
+if [[ -x "$CORE_FILE" ]]; then
+    echo -e "\033[38;5;245m ○ AETHER-X1 legacy engine ready (existing tunnels only)\033[0m"
 fi
 }
 
@@ -1501,11 +1592,19 @@ sed -u -E \
   -e 's/[♥❤♡❣💙💚💛💜🖤🤍🤎💔💕💞💓💗💖💘💝]️*//g' \
   -e 's/tixo-fwd/tixo/g'
 }
+engine_label_for_service() {
+local unit_file="${service_dir}/$1"
+if [[ -f "$unit_file" ]] && grep -q "^ExecStart=${OSS_ENGINE_FILE} " "$unit_file"; then
+    echo "$OSS_ENGINE_EDITION"
+else
+    echo "$ENGINE_EDITION"
+fi
+}
 show_live_header() {
 local service="$1"
 echo -e "\033[38;5;51m════════════════════════════════════════════════════════════════════\033[0m"
 echo -e "\033[97m TixoTunnel Live Monitor\033[0m"
-printf  "\033[38;5;245m Service  %-36s Engine  %s\033[0m\n" "$service" "$ENGINE_EDITION"
+printf  "\033[38;5;245m Service  %-36s Engine  %s\033[0m\n" "$service" "$(engine_label_for_service "$service")"
 echo -e "\033[38;5;51m════════════════════════════════════════════════════════════════════\033[0m"
 }
 
@@ -1545,7 +1644,7 @@ create_update_backup() {
   stamp=$(date +%Y%m%d-%H%M%S)
   archive="$UPDATE_BACKUP_DIR/tixotunnel-update-$stamp.tar.gz"
   manifest=$(mktemp)
-  for f in "$PANEL_PATH" "$COMMAND_PATH" "$CORE_FILE" "$ENGINE_FILE" "$SPOOF_TESTER_FILE"; do
+  for f in "$PANEL_PATH" "$COMMAND_PATH" "$CORE_FILE" "$ENGINE_FILE" "$SPOOF_TESTER_FILE" "$OSS_ENGINE_FILE"; do
     [[ -e "$f" ]] && echo "$f" >> "$manifest"
   done
   find /etc/systemd/system -maxdepth 1 -type f \( -name 'tixotunnel-*.service' -o -name 'tixotunnel-*.timer' \) -print >> "$manifest" 2>/dev/null || true
@@ -1564,52 +1663,62 @@ restart_active_tunnels() {
 
 unified_update() {
   clear; section_header "Unified Update"
-  colorize cyan "This updates the console, AETHER-X1 core, Spoof Tester and the tixotunnel command in one operation." bold
+  colorize cyan "This updates the console, AETHER-X1 core, Go-OSS engine, Spoof Tester and the tixotunnel command in one operation." bold
   echo
   read -r -p "Update all TixoTunnel components now? [Y/n]: " answer
   [[ "$answer" =~ ^[Nn]$ ]] && return
 
-  local tmpdir backup panel_tmp core_tmp engine_tmp tester_tmp rc=0
+  local tmpdir backup panel_tmp core_tmp engine_tmp tester_tmp oss_engine_tmp rc=0 oss_rc=0
   tmpdir=$(mktemp -d)
   panel_tmp="$tmpdir/TixoTunnel.sh"
   core_tmp="$tmpdir/tixotunnel-core"
   engine_tmp="$tmpdir/tixotunnel-core.engine"
   tester_tmp="$tmpdir/tixotunnel-spoof-tester"
+  oss_engine_tmp="$tmpdir/tixotunnel-engine"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  echo; colorize cyan "[1/9] Creating rollback backup..." bold
+  echo; colorize cyan "[1/10] Creating rollback backup..." bold
   backup=$(create_update_backup) || { colorize red "Backup creation failed. Update cancelled."; press_key; return 1; }
   colorize green "      OK — $backup"
 
-  echo; colorize cyan "[2/9] Downloading console..." bold
+  echo; colorize cyan "[2/10] Downloading console..." bold
   curl -fL --retry 3 --connect-timeout 15 -o "$panel_tmp" "$PANEL_DOWNLOAD_URL" || rc=1
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[3/9] Downloading AETHER-X1 core..." bold
+  echo; colorize cyan "[3/10] Downloading AETHER-X1 core..." bold
   curl -fL --retry 3 --connect-timeout 15 -o "$core_tmp" "$CORE_DOWNLOAD_URL" || rc=1
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[4/9] Downloading AETHER-X1 engine..." bold
+  echo; colorize cyan "[4/10] Downloading AETHER-X1 engine..." bold
   if ! curl -fL --retry 3 --connect-timeout 15 -o "$engine_tmp" "$ENGINE_DOWNLOAD_URL"; then
     curl -fL --retry 3 --connect-timeout 15 -o "$engine_tmp" "$ENGINE_FALLBACK_URL" || rc=1
   fi
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[5/9] Downloading Spoof Tester..." bold
+  echo; colorize cyan "[5/10] Downloading Spoof Tester..." bold
   if ! curl -fL --retry 3 --connect-timeout 15 -o "$tester_tmp" "$SPOOF_TESTER_DOWNLOAD_URL"; then
     curl -fL --retry 3 --connect-timeout 15 -o "$tester_tmp" "$SPOOF_TESTER_FALLBACK_URL" || rc=1
   fi
   ((rc==0)) && colorize green "      OK" || { colorize red "      FAILED"; press_key; return 1; }
 
-  echo; colorize cyan "[6/9] Verifying downloaded files..." bold
+  echo; colorize cyan "[6/10] Downloading Go-OSS engine..." bold
+  if fetch_oss_engine "$oss_engine_tmp"; then
+    colorize green "      OK"
+  else
+    oss_rc=1
+    colorize yellow "      SKIPPED (not published yet; existing Go-OSS tunnels keep running)"
+  fi
+
+  echo; colorize cyan "[7/10] Verifying downloaded files..." bold
   if [[ ! -s "$panel_tmp" || ! -s "$core_tmp" || ! -s "$engine_tmp" || ! -s "$tester_tmp" ]]; then
     colorize red "      Verification failed: one or more files are empty."; press_key; return 1
   fi
   bash -n "$panel_tmp" || { colorize red "      Console syntax verification failed."; press_key; return 1; }
   chmod 0755 "$core_tmp" "$engine_tmp" "$tester_tmp"
+  (( oss_rc == 0 )) && chmod 0755 "$oss_engine_tmp"
   colorize green "      OK"
 
-  echo; colorize cyan "[7/9] Installing all components..." bold
+  echo; colorize cyan "[8/10] Installing all components..." bold
   mkdir -p "$config_dir"
   if ! install -m0755 "$panel_tmp" "$PANEL_PATH" || \
      ! install -m0755 "$panel_tmp" "$COMMAND_PATH" || \
@@ -1621,14 +1730,17 @@ unified_update() {
     systemctl daemon-reload
     press_key; return 1
   fi
+  if (( oss_rc == 0 )) && ! install -m0755 "$oss_engine_tmp" "$OSS_ENGINE_FILE"; then
+    colorize yellow "      Go-OSS engine install failed; keeping the previous Go-OSS engine binary."
+  fi
   colorize green "      OK"
 
-  echo; colorize cyan "[8/9] Reloading services..." bold
+  echo; colorize cyan "[9/10] Reloading services..." bold
   systemctl daemon-reload
   restart_active_tunnels
   colorize green "      OK"
 
-  echo; colorize cyan "[9/9] Final validation..." bold
+  echo; colorize cyan "[10/10] Final validation..." bold
   [[ -x "$CORE_FILE" && -x "$ENGINE_FILE" && -x "$SPOOF_TESTER_FILE" ]] || {
     colorize red "      Validation failed. Restoring backup..."
     tar -xzf "$backup" -C / >/dev/null 2>&1 || true

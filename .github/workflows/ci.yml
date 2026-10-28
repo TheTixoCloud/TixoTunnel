@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt check
+        run: |
+          out=$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "gofmt check failed; run 'gofmt -w' on the files above"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Verify vendor/module consistency
+        run: go mod verify
+
+      - name: go test
+        run: go test -race ./...
+
+      - name: Build (host arch)
+        run: go build -trimpath ./cmd/backhaul
+
+  build-matrix:
+    name: build (${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Cross-build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags "-s -w" -o /tmp/tixotunnel-${{ matrix.goarch }} ./cmd/backhaul
+
+      - name: Config validation smoke test (amd64 host only)
+        if: matrix.goarch == 'amd64'
+        run: |
+          cat > /tmp/smoke.toml <<'EOF'
+          [listener]
+          bind_addr = "127.0.0.1:18080"
+
+          [ports]
+          mapping = ["18081=18082"]
+
+          [security]
+          token = "ci-smoke-test-token-not-a-real-secret"
+          EOF
+          /tmp/tixotunnel-amd64 -check -c /tmp/smoke.toml
+          /tmp/tixotunnel-amd64 -version
