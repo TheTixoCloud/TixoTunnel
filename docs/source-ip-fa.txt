@@ -1,0 +1,95 @@
+تغییر Source IP؛ انتخاب IP واقعی با Spoof یکی نیست
+ir_spoof — https://t.me/ir_spoof
+
+دو تنظیم جدا داریم. اولی یک IP واقعیِ موجود روی سرور را برای اتصال انتخاب
+می‌کند. دومی فقط در TUN/IPX، آدرس مبدأ بسته خام را عوض می‌کند. هیچ‌کدام
+خودکار IP جدید به سرور نمی‌دهند، NAT شرکت را تغییر نمی‌دهند یا تو را ناشناس
+نمی‌کنند.
+
+۱) انتخاب IP واقعی برای client معمولی
+
+اول IPهای همین سرور را ببین:
+
+ip -brief address
+
+ASSIGNED_LOCAL_IP باید واقعاً روی یک اینترفیس فعال همین سرور باشد. برای یک
+تونل client غیر IPX که اسمش demo است:
+
+sudo backhaul-manager change-source demo --local-ip ASSIGNED_LOCAL_IP
+
+برای فهرست چند IP واقعی:
+
+sudo backhaul-manager change-source demo --local-ip ASSIGNED_IP_1 --local-ip ASSIGNED_IP_2
+
+تنظیم در dialer.local_addr یا dialer.local_addrs ذخیره می‌شود. موقع اتصال،
+هسته بررسی می‌کند IP واقعاً به سرور اختصاص داده شده باشد. اگر سرویس قبلاً
+فعال بوده، مدیر آن را با تنظیم جدید راه می‌اندازد و در خطای شروع، تنظیم قبلی
+را برمی‌گرداند. بعد از تغییر، اتصال واقعی را هم تست کن.
+
+برگشتن به انتخاب عادی سیستم‌عامل:
+
+sudo backhaul-manager change-source demo --clear-bind
+
+اگر سرورت پشت NAT است، طرف مقابل ممکن است همچنان IP عمومی همان NAT را ببیند.
+
+۲) ساخت TUN/IPX بین دو سرور
+
+برای این بخش دسترسی raw socket، /dev/net/tun و iproute2 لازم است. نام
+اینترفیس و IP واقعی هر دو سمت را از شبکه خودت بگیر. کلید IPX را فقط یک بار
+بساز و فایل یکسان را امن به سمت دیگر منتقل کن:
+
+sudo backhaul-manager secret ipx-demo --kind psk
+
+فایل مشترک:
+
+/etc/backhaul/secrets/ipx-demo.psk
+
+مجوز فایل روی هر دو طرف باید 600 باشد. این فایل یک PSK تصادفی ۳۲ بایتی با
+نمایش base64 است؛ از کلید ثابت یا کلید عمومی مثال‌ها استفاده نکن.
+
+روی A، مقدارهای ACTUAL_A_IP و ACTUAL_B_IP و eth0 را با شبکه خودت عوض کن:
+
+sudo backhaul-manager create ipx-demo --mode server --transport tun --encapsulation ipx --ipx-profile udp --local-ip ACTUAL_A_IP --peer-ip ACTUAL_B_IP --interface eth0 --tun-local 10.200.0.1/30 --tun-remote 10.200.0.2/30 --secret-file /etc/backhaul/secrets/ipx-demo.psk --start
+
+روی B، IPها برعکس می‌شوند:
+
+sudo backhaul-manager create ipx-demo --mode client --transport tun --encapsulation ipx --ipx-profile udp --local-ip ACTUAL_B_IP --peer-ip ACTUAL_A_IP --interface eth0 --tun-local 10.200.0.2/30 --tun-remote 10.200.0.1/30 --secret-file /etc/backhaul/secrets/ipx-demo.psk --start
+
+تست از A:
+
+ping -c 3 10.200.0.2
+sudo backhaul-manager health ipx-demo
+
+پروفایل‌های icmp، ipip، udp، tcp، gre و bip وجود دارند؛ شبکه یا ارائه‌دهنده
+ممکن است بعضی پروتکل‌های خام را عبور ندهد. پروفایل tcp در IPX یک اتصال TCP
+معمولی با handshake و ارسال مجدد کرنل نیست.
+
+۳) Spoof فقط وقتی مسیر آزمایش/شبکه مجازش را آماده کرده‌ای
+
+اول تونل عادی را تست کن. بعد اگر می‌خواهی مبدأ خام A برابر SPOOF_A_IP و
+مبدأ خام B برابر SPOOF_B_IP باشد، روی A بزن:
+
+sudo backhaul-manager change-source ipx-demo --spoof-source SPOOF_A_IP --expected-peer-source SPOOF_B_IP
+
+و روی B:
+
+sudo backhaul-manager change-source ipx-demo --spoof-source SPOOF_B_IP --expected-peer-source SPOOF_A_IP
+
+این‌ها در ipx.spoof_src_ip و ipx.spoof_dst_ip ذخیره می‌شوند. دومی یعنی «از
+سمت مقابل انتظار چه مبدأیی دارم»، نه این‌که مقصد ارسال را عوض کن. مقصد واقعی
+همچنان IP واقعی سرور مقابل است. IP واقعی Listen و Peer را با آدرس ساختگی
+جایگزین نکن.
+
+بین تغییر دو طرف ممکن است تونل موقتاً قطع شود. فیلتر ضد spoof ارائه‌دهنده،
+مسیر برگشت و قوانین شبکه باید با این حالت سازگار باشند؛ خود برنامه آن‌ها
+را روی اینترنت درست نمی‌کند. روی شبکه‌ای که مجوز و کنترلش را داری تست کن.
+
+خاموش کردن override در هر دو طرف:
+
+sudo backhaul-manager change-source ipx-demo --clear-spoof
+
+پوشش تست هر پروفایل و محدودیت‌های واقعی را در docs/test-report.md ببین.
+این نسخه از قاب امن‌تر BHX2 استفاده می‌کند و به هسته IPX پریمیوم قدیمی وصل
+نمی‌شود؛ هر دو سرور باید همین بازنویسی را اجرا کنند.
+
+بازنویسی و راهنما: ir_spoof — t.me/ir_spoof

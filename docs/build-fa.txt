@@ -1,0 +1,85 @@
+ساخت Backhaul از سورس؛ قدم‌به‌قدم و آفلاین
+ir_spoof — https://t.me/ir_spoof
+
+هسته این بازنویسی با Go نوشته شده؛ مدیر نصب Python است و wrapper ساده Bash
+دارد. سورس اصلی پریمیوم بازیابی نشده؛ این کد مستقل است و عمداً درخواست‌های
+لایسنس، گزارش IP و دانلود خودکار سازنده را ندارد.
+
+۱) پیش‌نیازها
+
+روی لینوکس Go نسخه 1.26 یا بالاتر نصب داشته باش. نسخه کامپایلر استفاده‌شده
+برای تست نهایی در گزارش انتشار ثبت می‌شود. برای مدیر نصب Python 3.11 به بالا
+و systemd لازم است. برای TUN/IPX هم iproute2 و /dev/net/tun می‌خواهی.
+
+go version
+python3 --version
+
+وابستگی‌های Go داخل پوشه vendor بسته سورس هستند. وقتی پیش‌نیازها را داری،
+برای کامپایل برنامه لازم نیست به سایت سازنده یا مخزن ماژول‌ها وصل شوی.
+
+۲) بسته سورس را استخراج کن و واردش شو
+
+tar -xzf backhaul-ir_spoof-source-0.1.0.tar.gz
+cd backhaul-ir_spoof-source-0.1.0
+
+یا فایل ZIP سورس را استخراج کن و وارد پوشه‌ای شو که go.mod و scripts دارد.
+
+۳) کامپایل
+
+sh scripts/build.sh
+
+خروجی اینجاست:
+
+build/backhaul
+
+اسکریپت برای Linux amd64 می‌سازد، دانلود ماژول و telemetry کامپایلر را خاموش
+می‌کند و مسیر پوشه کامپیوترت و اطلاعات Git محلی را داخل خروجی نگه نمی‌دارد.
+برای ساخت arm64 می‌توانی GOARCH=arm64 بدهی؛ نتیجه تست نسخه آماده amd64 را
+نباید به یک خروجی آزمایش‌نشده arm64 تعمیم بدهی.
+
+GOARCH=arm64 sh scripts/build.sh
+
+اگر می‌خواهی دقیقاً فرمان اصلی را ببینی:
+
+CGO_ENABLED=0 GOTOOLCHAIN=local GOTELEMETRY=off GOPROXY=off GOSUMDB=off GOOS=linux GOARCH=amd64 go build -mod=vendor -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o build/backhaul ./cmd/backhaul
+
+۴) نسخه و تست‌ها
+
+./build/backhaul -version
+GOTOOLCHAIN=local GOTELEMETRY=off GOPROXY=off GOSUMDB=off go test -mod=vendor -trimpath -buildvcs=false ./...
+python3 scripts/test-manager.py
+
+تست‌های نیازمند TUN/raw باید در محیط لینوکسی مناسب و با دسترسی لازم اجرا
+شوند. گزارش انتشار می‌گوید کدام تست واقعاً در VM اجرا شده؛ صرفاً کامپایل شدن
+یعنی همه پروتکل‌ها در شبکه واقعی تو کار می‌کنند؟ نه.
+
+۵) نصب خروجی خودت
+
+sha256sum build/backhaul
+
+هش خروجی مورد اعتمادت را به جای TRUSTED_BUILD_HASH بگذار:
+
+sudo sh scripts/install.sh --binary build/backhaul --sha256 TRUSTED_BUILD_HASH
+
+بعد منو را باز کن:
+
+sudo backhaul-manager
+
+کلید مشترک را با مدیر بساز و روش دو سرور را از docs/setup-fa.txt دنبال کن.
+برای تغییر مبدأ واقعی یا IPX spoof هم docs/source-ip-fa.txt را ببین.
+
+برای بررسی یک فایل تنظیمات، بدون راه‌اندازی شبکه:
+
+./build/backhaul -c config.toml -check
+
+این بررسی آفلاین است؛ موجود بودن IP روی اینترفیس، دسترسی TUN و سالم بودن
+ارتباط واقعی موقع اجرا/تست جداگانه بررسی می‌شوند. تنظیمات خصوصی و کلیدهای
+واقعی را داخل سورس، ZIP انتشار یا Git نگذار.
+
+۶) انتشار سورس خودت
+
+README، LICENSE، vendor و noticeهای وابستگی‌ها را نگه دار. build، لاگ،
+فایل تنظیمات خصوصی، کلید و capture را وارد ریپو نکن. اعتبار بازنویسی
+ir_spoof است؛ وابستگی‌های دیگر هم نویسنده و مجوز خودشان را دارند.
+
+بازنویسی و راهنما: ir_spoof — t.me/ir_spoof

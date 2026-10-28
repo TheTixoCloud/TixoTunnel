@@ -1,4 +1,25 @@
-*.tmp
+# Independent Linux rebuild by ir_spoof - https://t.me/ir_spoof
+/build/
+/bin/
+/dist/
+/work/
+/.cache/
+__pycache__/
+*.py[cod]
+*.test
+*.exe
 *.log
+*.pcap
+*.pcapng
+*.qcow2
+*.key
+*.pem
+*.crt
+.env
+coverage.out
+coverage.html
+
+# Pre-existing repository ignores
+*.tmp
 *.bak
 .DS_Store
