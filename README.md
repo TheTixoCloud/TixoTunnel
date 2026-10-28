@@ -210,15 +210,24 @@ published on the [Releases page](https://github.com/TheTixoCloud/TixoTunnel/rele
 for every tagged version. Always verify the checksum before running a
 downloaded binary.
 
-## Legacy console (`TixoTunnel.sh` / AETHER-X1 engine)
+## Management console (`TixoTunnel.sh`)
 
-This repository also distributes a separate, pre-existing bash management
-console and prebuilt engine, unrelated to the Go source above:
+`TixoTunnel.sh` is the pre-existing bash management console (menus, Iran
+server / Kharej client wizard, port mapping, systemd service management,
+status/logs/restart, benchmarks, diagnostics, updater). It now provisions
+**this repository's Go source** for every newly created tunnel, alongside
+the original closed-source `AETHER-X1` bundle, which it keeps for tunnels
+created by older console versions:
 
-- `TixoTunnel.sh` — installation and management console.
-- `core/tixotunnel-core` — service launcher and core wrapper.
-- `core/tixotunnel-core.engine` — AETHER-X1 engine and Advanced Spoof Tester
-  executable.
+- `TixoTunnel.sh` — installation and management console (English menus).
+- `core/tixotunnel-engine-amd64` / `core/tixotunnel-engine-arm64` — this
+  repository's Go engine (`cmd/backhaul`), used for every tunnel created by
+  the current console. No telemetry, license check, or phone-home behavior.
+- `core/tixotunnel-core` + `core/tixotunnel-core.engine` — the legacy
+  `AETHER-X1` wrapper and engine, kept only so tunnels created before this
+  change keep running and stay manageable (status, logs, restart, update).
+  New tunnels no longer use this engine.
+- `core/tixotunnel-spoof-tester` — the Advanced Spoof Tester, unchanged.
 
 Install it as `root` on a supported Debian/Ubuntu server:
 
@@ -226,13 +235,15 @@ Install it as `root` on a supported Debian/Ubuntu server:
 bash <(curl -fsSL https://raw.githubusercontent.com/TheTixoCloud/TixoTunnel/main/TixoTunnel.sh)
 ```
 
-After installation, launch the console with `tixotunnel`. Its unified
-updater downloads the console and both core files from this repository's
-`main` branch and creates a rollback archive before replacing installed
-files. Release identity: console `NEXUS-1.0.0`, engine `AETHER-X1`, tag
-`v1.0.0`. The Advanced Spoof Tester uses the dedicated
-`core/tixotunnel-spoof-tester` binary; the tunnel engine remains
-`core/tixotunnel-core.engine` — the two are intentionally separate.
+After installation, launch the console with `tixotunnel`. `[1] Create
+Tunnel` generates a TOML config compatible with this repository's
+`internal/config` schema and starts it under `core/tixotunnel-engine-<arch>`
+via a dedicated systemd unit. `[10] Update Center → Update Everything`
+refreshes the console, both engines, and the Spoof Tester, with a rollback
+backup created first. Tunnels created by an older console version keep
+their existing `AETHER-X1` systemd unit untouched — the console's
+status/logs/restart/remove menus work on both engines identically, since
+they operate on the systemd unit, not the engine binary.
 
 As with the Go core above: use tunneling, forwarding, diagnostics,
 benchmarking, and spoof-testing features only on systems and networks you
